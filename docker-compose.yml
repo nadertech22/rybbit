@@ -1,15 +1,21 @@
-version: '3.8'
+version: "3.8"
 
 services:
   clickhouse:
     image: clickhouse/clickhouse-server:25.4.2
     container_name: clickhouse
+    environment:
+      - CLICKHOUSE_DB=${CLICKHOUSE_DB:-analytics}
+      - CLICKHOUSE_USER=${CLICKHOUSE_USER:-default}
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:-frog}
     volumes:
       - clickhouse-data:/var/lib/clickhouse
-    environment:
-      CLICKHOUSE_DB: ${CLICKHOUSE_DB:-analytics}
-      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
-      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-frog}
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:8123/ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     networks:
       - internal
 
@@ -17,37 +23,51 @@ services:
     image: postgres:17.4
     container_name: postgres
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-frog}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-frog}
-      POSTGRES_DB: ${POSTGRES_DB:-analytics}
+      - POSTGRES_USER=${POSTGRES_USER:-frog}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-frog}
+      - POSTGRES_DB=${POSTGRES_DB:-analytics}
     volumes:
       - postgres-data:/var/lib/postgresql/data
     networks:
       - internal
 
   backend:
-    image: ghcr.io/rybbit-io/rybbit-backend:latest
+    image: ghcr.io/rybbit-io/rybbit-backend:${IMAGE_TAG:-latest}
     container_name: backend
     environment:
-      NODE_ENV: production
-      CLICKHOUSE_HOST: http://clickhouse:8123
-      POSTGRES_HOST: postgres
-      BASE_URL: ${BASE_URL}
+      - NODE_ENV=production
+      - CLICKHOUSE_HOST=http://clickhouse:8123
+      - CLICKHOUSE_DB=${CLICKHOUSE_DB:-analytics}
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:-frog}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-analytics}
+      - POSTGRES_USER=${POSTGRES_USER:-frog}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-frog}
+      - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET}
+      - BASE_URL=${BASE_URL}
+      - DISABLE_SIGNUP=${DISABLE_SIGNUP}
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      postgres:
+        condition: service_started
     labels:
       - "caddy=${DOMAIN}"
       - "caddy.reverse_proxy=/api/* backend:3000"
     networks:
       - internal
       - coolify
-    depends_on:
-      clickhouse:
-        condition: service_healthy
-      postgres:
-        condition: service_started
 
   client:
-    image: ghcr.io/rybbit-io/rybbit-client:latest
+    image: ghcr.io/rybbit-io/rybbit-client:${IMAGE_TAG:-latest}
     container_name: client
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_BACKEND_URL=${BASE_URL}
+      - NEXT_PUBLIC_DISABLE_SIGNUP=${DISABLE_SIGNUP}
+    depends_on:
+      - backend
     labels:
       - "caddy=${DOMAIN}"
       - "caddy.reverse_proxy=/ client:3000"
@@ -61,5 +81,6 @@ volumes:
 
 networks:
   internal:
+    driver: bridge
   coolify:
     external: true
