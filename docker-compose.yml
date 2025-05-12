@@ -1,0 +1,65 @@
+version: '3.8'
+
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:25.4.2
+    container_name: clickhouse
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+    environment:
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB:-analytics}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-frog}
+    networks:
+      - internal
+
+  postgres:
+    image: postgres:17.4
+    container_name: postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-frog}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-frog}
+      POSTGRES_DB: ${POSTGRES_DB:-analytics}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - internal
+
+  backend:
+    image: ghcr.io/rybbit-io/rybbit-backend:latest
+    container_name: backend
+    environment:
+      NODE_ENV: production
+      CLICKHOUSE_HOST: http://clickhouse:8123
+      POSTGRES_HOST: postgres
+      BASE_URL: ${BASE_URL}
+    labels:
+      - "caddy=${DOMAIN}"
+      - "caddy.reverse_proxy=/api/* backend:3000"
+    networks:
+      - internal
+      - coolify
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      postgres:
+        condition: service_started
+
+  client:
+    image: ghcr.io/rybbit-io/rybbit-client:latest
+    container_name: client
+    labels:
+      - "caddy=${DOMAIN}"
+      - "caddy.reverse_proxy=/ client:3000"
+    networks:
+      - internal
+      - coolify
+
+volumes:
+  clickhouse-data:
+  postgres-data:
+
+networks:
+  internal:
+  coolify:
+    external: true
